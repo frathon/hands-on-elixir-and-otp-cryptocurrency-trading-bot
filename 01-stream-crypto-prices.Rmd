@@ -107,7 +107,7 @@ We can see that docs are pointing to the following stream name:
 Stream Name: <symbol>@trade
 ```
 
-Together, our full URL looks like: "wss://stream.binance.com:9443/ws/<symbol>@trade".
+Together, our full URL looks like: `wss://stream.binance.com:9443/ws/<symbol>@trade`.
 To give a concrete example: the raw trade events stream URL for symbol XRPUSDT is:
 "wss://stream.binance.com:9443/ws/xrpusdt@trade" (remember that symbols need to be lowercased, otherwise no trade events will get streamed - there's *no* error).
 
@@ -139,7 +139,7 @@ iex(1)> Streamer.Binance.start_link("xrpusdt")
 {:ok, #PID<0.335.0>}
 Received Message - Type: :text -- Message: "{\"e\":\"trade\", \"E\":1603226394741,
   \"s\":\"XRPUSDT\",\"t\":74608889,\"p\":\"0.24373000\",\"q\":\"200.00000000\",
-  \"b\":948244411,\"a\":948244502,\"T\":1603226394739,\"m\":true,\"M\":true}"
+  \"T\":1603226394739,\"m\":true,\"M\":true}"
 ```
 
 We can see the messages logged above because we copied the sample implementation from [WebSockex's readme](https://github.com/Azolo/websockex) where `handle_frame/2` function uses `IO.puts/1` to print out all incoming data. The lesson here is that every incoming message from Binance will cause the `handle_frame/2` callback to be called with the message and the process' state.
@@ -172,17 +172,17 @@ end
 
 ## Decode incoming events using the Jason module
 
-Currently, all incoming data from WebSocket is encoded as a JSON. To decode JSON we will use the [jason](https://github.com/michalmuskala/jason) module.
+Currently, all incoming data from WebSocket is encoded as JSON. To decode JSON we will use the [jason](https://github.com/michalmuskala/jason) module.
 
-Scrolling down to the `Installation` section inside the module's readme, we can see that we need to add it to the dependencies and we can start to use it right away.
+Scrolling down to the `Installation` section inside the module's readme, we can see that we need to add it to the dependencies and we can start using it right away.
 
-Let's open the `mix.exs` file of the `streamer` application and append the `:jason` dependency to the list inside `deps` function:
+Let's open the `mix.exs` file of the `streamer` application and append the `:jason` dependency to the list inside the `deps` function:
 
 ```{r, engine = 'elixir', eval = FALSE}
   # /apps/streamer/mix.exs
   defp deps do
     [
-      {:jason, "~> 1.2"},
+      {:jason, "~> 1.4"},
       {:websockex, "~> 0.4"}
     ]
   end
@@ -194,7 +194,7 @@ Looking through the documentation of the Jason module we can see `encode!/2` and
 
 This is less than perfect for our use case as we would like to handle those errors in our own way(technically we could just use try/rescue but as we will find out both `encode/2` and `decode/2` are available).
 
-We will go a little bit off-topic but I would highly recommend those sorts of journeys around somebody's code. Let's look inside the [Jason](https://github.com/michalmuskala/jason/blob/master/lib/jason.ex) module. Scrolling down in search of `decode/2` (without the exclamation mark) we can see it about line 54:
+We will go a little bit off-topic but I would highly recommend those sorts of journeys around somebody's code. Let's look inside the [Jason](https://github.com/michalmuskala/jason/blob/master/lib/jason.ex) module. Scrolling down in search of `decode/2` (without the exclamation mark) we can see it about line 67:
 
 ```{r, engine = 'elixir', eval = FALSE}
   # /lib/jason.ex
@@ -213,15 +213,18 @@ It looks like it uses the `parse/2` function of a `Decoder` module, let's scroll
 alias Jason.{Encode, Decoder, DecodeError, EncodeError, Formatter}
 ```
 
-we can see that `Decoder` is an alias of the [`Jason.Decoder`](https://github.com/michalmuskala/jason/blob/master/lib/decoder.ex). Scrolling down to the `Jason.Decoder` module we will find a `parse/2` function about line 43:
+we can see that `Decoder` is an alias of the [`Jason.Decoder`](https://github.com/michalmuskala/jason/blob/master/lib/decoder.ex). Scrolling down to the `Jason.Decoder` module we will find a `parse/2` function about line 48:
 
 ```{r, engine = 'elixir', eval = FALSE}
   # /lib/decoder.ex
   def parse(data, opts) when is_binary(data) do
     key_decode = key_decode_function(opts)
     string_decode = string_decode_function(opts)
+    float_decode = float_decode_function(opts)
+    object_decode = object_decode_function(opts)
+    decode = decode(keys: key_decode, strings: string_decode, objects: object_decode, floats: float_decode)
     try do
-      value(data, data, 0, [@terminate], key_decode, string_decode)
+      value(data, data, 0, [@terminate], decode)
     catch
       {:position, position} ->
         {:error, %DecodeError{position: position, data: data}}
@@ -252,7 +255,7 @@ We can now get back to our `Streamer.Binance` module and modify the `handle_fram
   end
 ```
 
-Please make note that `type` is now prefixed with an underscore as we aren't using it at the moment.
+Please make note that `type` argument is now prefixed with an underscore as we aren't using it at the moment.
 
 The second important thing to note is that we are using `Logger` so it needs to be `require`d at the beginning of the module:
 
@@ -284,8 +287,6 @@ We can refer to [Binance's docs](https://github.com/binance/binance-spot-api-doc
   "t": 12345,       // Trade ID
   "p": "0.001",     // Price
   "q": "100",       // Quantity
-  "b": 88,          // Buyer order ID
-  "a": 50,          // Seller order ID
   "T": 123456785,   // Trade time
   "m": true,        // Is the buyer the market maker?
   "M": true         // Ignore
@@ -304,15 +305,13 @@ Let's copy them across and convert the comments to update the `defstruct` inside
     :trade_id,
     :price,
     :quantity,
-    :buyer_order_id,
-    :seller_order_id,
     :trade_time,
     :buyer_market_maker
   ]
 ```
 
 That's all for this struct, we can now get back to implementing the `process_event/2` function inside the `Streamer.Binance` module. We will map every field of the response map to the `%Streamer.Binance.TradeEvent` struct. A useful trick here would be to copy the list of fields once again from the struct and assign the incoming fields one by one.
-Inside the header of the function, we will pattern match on event type(a field called "e" in the message) to confirm that indeed we received a trade event). In the end, the `process_event/2` function should look as follows:
+Inside the header of the function, we will pattern match on event type(a field called "e" in the message) to confirm that indeed we received a trade event. In the end, the `process_event/2` function should look as follows:
 
 ```{r, engine = 'elixir', eval = FALSE}
   # /apps/streamer/lib/streamer/binance.ex
@@ -324,8 +323,6 @@ Inside the header of the function, we will pattern match on event type(a field c
       :trade_id => event["t"],
       :price => event["p"],
       :quantity => event["q"],
-      :buyer_order_id => event["b"],
-      :seller_order_id => event["a"],
       :trade_time => event["T"],
       :buyer_market_maker => event["m"]
     }
@@ -341,7 +338,7 @@ We added the `Logger.debug/2` function to be able to see logs of incoming trade 
 
 \newpage
 
-Lastly, before testing our implementation, let's add a nice interface to our `streamer` application that allows starting streaming:
+Lastly, before testing our implementation, let's add a nice interface to our `streamer` application that allows us to start streaming:
 
 ```{r, engine = 'elixir', eval = FALSE}
 # /apps/streamer/lib/streamer.ex
@@ -379,7 +376,7 @@ iex(1)> Streamer.start_streaming("xrpusdt")
 23:14:36.386 [debug] Trade event received XRPUSDT@0.25606000
 ```
 
-As we can see, the streamer is establishing a WebSocket connection with Binance's API and its receiving trade events. It decodes them from JSON to `%Streamer.Binance.TradeEvent` struct and logs a compiled message. Also, our interface hides implementation details from the "user" of our application.
+As we can see, the streamer is establishing a WebSocket connection with Binance's API and its receiving trade events. It decodes them from JSON to `%Streamer.Binance.TradeEvent` struct and logs a compiled message. Also, our interface module hides implementation details from the "user" of our application.
 
 We will now flip the `Logger` level back to `info` so the output won't every incoming trade event:
 
