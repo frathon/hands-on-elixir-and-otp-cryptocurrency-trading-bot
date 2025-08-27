@@ -175,19 +175,28 @@ We will focus on a trader in 3 different states:
 
 **First state - A new trader**
 
-The trader doesn't have any open orders which we can confirm by pattern matching on the `buy_order` field from its state. From the incoming event, we can grab
+The trader doesn't have any open orders which we can confirm by pattern matching on the 
+`buy_order` field from its state. From the incoming event, we can grab
 the current price which we will use in the buy order that the trader will place.
 
 **Second state - Buy order placed**
 
-After placing a buy order, the trader's buy order will be pattern matched against
-the incoming events' data to confirm the order got filled, otherwise ignoring it.
-When a trade event matching the order id of the trader's buy order will arrive, it means that the buy order got filled(simplification - our order could be filled in two or more transactions but implementation in this chapter won't cater for this case, it will always assume that it got filled in a single transaction) and the trader can now place the sell order based on the expected profit and the buy_price.
+After placing a buy order, the buy order's price will be compared against
+the incoming events' price to confirm the order got filled, otherwise ignoring it.
+When a trade event with a price lower than the buy order's price will arrive,
+it means that the buy order got filled(simplification - our order could be filled earlier,
+potentially in two or more transactions but our implementation won't cater for this case, 
+it will always assume that order got filled when current price surpassed the buy/sell order)
+and the trader can now place the sell order based on the expected profit and the buy_price.
 
 **Third state - Sell order placed**
 
-Finally, in a very similar fashion to the previous state, the trader will be pattern matching to confirm that the incoming event has filled his sell order(matching order id), otherwise ignore it.
-When a trade event matching the order id of trader's sell order will arrive, which means that the sell order got filled(simplification as described above) and the full trade cycle has ended and the trader can now exit.
+Finally, in a very similar fashion to the previous state, the trader will be compare the 
+price to confirm that the incoming event has filled the sell order(trade event's price is 
+above the sell order's price), otherwise ignore it.
+When a trade event's price is above the sell order's price will arrive, that means 
+that the sell order got filled(simplification as described above) and the full trade cycle 
+has ended and the trader can now exit.
 
 ### Implementation of the first scenario
 
